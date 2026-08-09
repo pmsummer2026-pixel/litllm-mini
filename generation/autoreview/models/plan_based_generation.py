@@ -7,7 +7,7 @@ import time
 from autoreview.models.toolkit_utils import set_env_variables
 set_env_variables(do_hf_login=False)
 import argparse
-from datasets import load_dataset, set_caching_enabled
+from datasets import load_dataset, load_from_disk, set_caching_enabled
 from functools import partial
 from autoreview.models.ml_utils import load_all_prompts, Dict2Class
 from autoreview.models.data_utils import (create_model_input, get_complete_mapped_prompt, 
@@ -103,7 +103,14 @@ class PlanBasedInference:
         self.compute_sentence_rouge(preds=preds, refs=refs)
 
     def get_dataset(self, dataset_name, small_dataset: bool = False, split: str= "test", redownload: bool = False):
-        if redownload:
+        if os.path.isdir(dataset_name):
+            # Local dataset saved via Dataset.save_to_disk() (e.g. by
+            # openscholar_mini/to_litllm_schema.py). Supports both a plain
+            # Dataset directory and a DatasetDict directory.
+            dataset = load_from_disk(dataset_name)
+            if hasattr(dataset, "column_names") is False or isinstance(dataset, dict):
+                dataset = dataset[split] if split in dataset else list(dataset.values())[0]
+        elif redownload:
             dataset = load_dataset(dataset_name, split=split, download_mode='force_redownload')
         else:
             dataset = load_dataset(dataset_name, split=split)
