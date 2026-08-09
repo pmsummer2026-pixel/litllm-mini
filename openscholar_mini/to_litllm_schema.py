@@ -11,22 +11,24 @@ Each parsed paper JSON can be in one of two shapes:
      "abstract", ...}, "fullText": {...}, "citations": [...]}
 
 This script normalizes either shape, builds one ref_abstract entry per paper
-(cite_1..cite_N mapped to each paper's abstract), and writes a single-row
+(cite_1..cite_N mapped to each paper's own abstract), and writes a single-row
 HuggingFace dataset to --out_dir that can be loaded with
-datasets.load_from_disk() and passed to litllm's generation script.
+datasets.load_from_disk() and passed straight to litllm-mini's generation
+script (see get_dataset() in plan_based_generation.py, which now accepts a
+local directory path).
+
+No query/target abstract is required. The row's "abstract" field is left
+blank by default, so the model is asked to write a related-work section
+synthesizing the 10 papers' own abstracts rather than relating them to one
+external target paper. Pass --query_abstract / --query_abstract_file only if
+you want to anchor the section to a specific paper's abstract instead.
 
 Usage:
-    python openscholar_mini/to_litllm_schema.py \
-        --papers_dir openscholar_mini/data/parsed \
-        --query_abstract_file my_query_abstract.txt \
+    python openscholar_mini/to_litllm_schema.py \\
+        --papers_dir openscholar_mini/data/parsed \\
         --out_dir openscholar_mini/litllm_dataset
-
-Note: this only builds the ref_abstract candidate pool from your 10 papers.
-You still need to supply the query abstract (the paper/topic you want a
-related-work section written for) via --query_abstract or
---query_abstract_file, and optionally a gold related_work text via
---related_work_file for ROUGE scoring.
 """
+
 import argparse
 import json
 from pathlib import Path
@@ -96,13 +98,12 @@ def main():
     print(f"Loaded {len(papers)} papers from {args.papers_dir}")
     for p in papers:
         print(f"  - {p['paper_id']}: {p['title'][:80]}")
+        if not p["abstract"]:
+            print(f"    WARNING: empty abstract for {p['paper_id']}")
 
+    # No query abstract is required: left blank by default so the model
+    # writes a related-work section covering the 10 papers themselves.
     query_abstract = read_text_arg(args.query_abstract, args.query_abstract_file)
-    if not query_abstract:
-        raise SystemExit(
-            "Provide --query_abstract or --query_abstract_file with the "
-            "abstract you want a related-work section generated for."
-        )
     related_work = read_text_arg(args.related_work, args.related_work_file)
 
     ref_abstract = build_ref_abstract(papers)
