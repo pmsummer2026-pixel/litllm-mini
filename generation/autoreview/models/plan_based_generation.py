@@ -16,6 +16,7 @@ from autoreview.models.data_utils import (create_model_input, get_complete_mappe
                                           pkl_load, find_strings_with_word_positions) 
 from autoreview.models.pipeline import MDSGen
 from autoreview.models.langchain_openai_agent import OpenAIAgent
+from autoreview.models.anthropic_agent import AnthropicAgent
 from autoreview.models.anyscale_endpoint import anyscale_chat_complete
 from autoreview.evaluation.compute_score import Metrics
 import pandas as pd
@@ -39,14 +40,17 @@ class PlanBasedInference:
         config={"model_name": self.config.model_name}
         config = Dict2Class(config)
         score_pipeline = MDSGen(config, inference=False)
-        if self.config.model_name.startswith("gpt"):
+        if (self.config.model_name.startswith("gpt") or self.config.model_name.startswith("claude")):
             self.ml_model = self.load_model()
         else:
             print("Not GPT based. Using Anyscale endpoints")
         self.metric = Metrics(config={"metric": "rouge"})
 
     def load_model(self):
-        ml_model = OpenAIAgent(self.config.model_name)
+        if self.config.model_name.startswith("claude"):
+            ml_model = AnthropicAgent(self.config.model_name)
+        else:
+            ml_model = OpenAIAgent(self.config.model_name)
         return ml_model
 
     def load_spacy(self, spacy_module: str='en_core_web_sm'):
@@ -146,7 +150,7 @@ class PlanBasedInference:
         preds = []
         generated_plan = []
         for row in tqdm(dataset):
-            if self.config.model_name.startswith("gpt"):
+            if (self.config.model_name.startswith("gpt") or self.config.model_name.startswith("claude")):
                 response_dict = self.ml_model.get_response(row["text"])
             else:
                 response = anyscale_chat_complete(prompt=row["text"], engine=self.config.model_name)
@@ -175,7 +179,7 @@ class PlanBasedInference:
                             break
                         except:
                             print(f"Split with \n\n failed. Trying the response again")
-                            if self.config.model_name.startswith("gpt"):
+                            if (self.config.model_name.startswith("gpt") or self.config.model_name.startswith("claude")):
                                 response_dict = self.ml_model.get_response(row["text"])
                             else:
                                 response = anyscale_chat_complete(prompt=row["text"], engine=self.config.model_name)
@@ -192,7 +196,7 @@ class PlanBasedInference:
         # Common        
         # print(preds)
         refs = dataset["related_work"]
-        if self.config.model_name.startswith("gpt"):
+        if (self.config.model_name.startswith("gpt") or self.config.model_name.startswith("claude")):
             print("Total amount spent: ", self.ml_model.get_state_dict()["budget_spent"])
         self.metrics_wrapper(savedir, preds, refs, dataset=dataset, generated_plan=generated_plan)
         # if not self.config.learned_plan:
@@ -277,15 +281,17 @@ def parse_args() -> argparse.Namespace:
         "--model_name",
         default="gpt-4",
         choices=["gpt-3.5-turbo", "gpt-4", "meta-llama/Llama-2-7b-chat-hf", "meta-llama/Llama-2-13b-chat-hf",
-                 "meta-llama/Llama-2-70b-chat-hf", "codellama/CodeLlama-34b-Instruct-hf"],
+                 "meta-llama/Llama-2-70b-chat-hf", "codellama/CodeLlama-34b-Instruct-hf",
+                 "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
+                 "claude-3-opus-20240229", "claude-sonnet-4-20250514"],
         help="Model name",
     )
     parser.add_argument(
         "-d",
         "--dataset_name",
         default="multi_x_science_sum",
-        choices=["multi_x_science_sum", "shubhamagarwal92/rw_2308_filtered"],
-        help="Dataset name",
+        help="Dataset name (a Hugging Face Hub dataset name, or a local directory "
+             "saved via Dataset.save_to_disk(), e.g. openscholar_mini/litllm_dataset)",
     )
     parser.add_argument(
         "-p",
@@ -332,6 +338,10 @@ if __name__ == "__main__":
         sample.main(parsed_args.dataset_name, savedir=out_dir, max_len_ctx=3000, max_len_cite=330)
     elif parsed_args.model_name == "gpt-3.5-turbo":
         sample.main(parsed_args.dataset_name, savedir=out_dir, max_len_ctx=1600, max_len_cite=250)
+    elif parsed_args.model_name.startswith("claude"):
+        # Claude models support a much larger context window; this is still
+        # a conservative limit relative to that, just larger than the GPT default.
+        sample.main(parsed_args.dataset_name, savedir=out_dir, max_len_ctx=6000, max_len_cite=400)
     else:
         # 408 example
         # 2300 - 4216 tokens
